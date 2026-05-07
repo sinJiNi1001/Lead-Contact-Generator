@@ -47,42 +47,38 @@ async def analyze_company_with_ai(company_name: str, company_url: str, website_t
     {json.dumps(sales_inputs, indent=2)}
 
     ### Company Data:
-    Name: {company_name}
     URL: {company_url}
-    Website Text: {website_text[:1000]}
+    Website Text: {website_text[:1500]}
 
     ### Instructions:
-    1. Calculate a lead_score from 0 to 100.
-    2. Write a 1-sentence reason for your score.
-    3. Extract positive buying signals as an object (key-value pairs).
+    1. Calculate a lead_score from 0 to 100 based heavily on how well the Website Text matches the Keywords and Company Size.
+    2. Write a completely unique 1-sentence reason explaining why you gave that specific score.
+    3. Extract positive buying signals as an object (key-value pairs) based ONLY on the Website Text.
     4. Estimate your confidence_score as a decimal between 0.0 and 1.0.
     5. List top_contacts. Use "Unknown" for names and a dummy URL for LinkedIn.
     
     CRITICAL DATA CLEANLINESS RULES:
-    1. "name": Extract ONLY the bare company name. Strip out all marketing fluff, SEO taglines, locations, or legal entities (LLC, Pvt Ltd).
-   - BAD: "Mplussoft | Custom Software Development Company in Pune"
-   - GOOD: "Mplussoft"
-   - BAD: "Acme Corp Ltd."
-   - GOOD: "Acme Corp"
+    1. "name": Read the Website Text and URL. Extract ONLY the bare brand/company name. Do NOT use search titles, SEO descriptions, or legal entities (like LLC, Pvt Ltd).
+       - BAD: "Top Software Development Company in Pune"
+       - GOOD: "Mplussoft"
+    2. "domain": Extract ONLY the root domain from the provided URL.
+       - BAD: "https://www.ajackus.com/software"
+       - GOOD: "ajackus.com"
+    3. DIRECTORY FILTER: If the website text describes a list, a directory, or a ranking of other companies, set the lead_score to 0 and set priority to 'N/A'.
 
-     2. "domain": Extract ONLY the root domain from the provided URL. Do NOT include 'https://', 'www.', or any trailing paths.
-   - BAD: "https://www.ajackus.com/software-development-company-in-pune/"
-   - GOOD: "ajackus.com"
-   
-    3.DIRECTORY FILTER: If the website text describes a list, a directory, or a ranking of other companies (e.g., 'Top 20 companies', 'TechBehemoths directory'), 
-    set the lead_score to 0 and set priority to 'N/A'. I only want the service providers themselves."
+    WARNING: DO NOT COPY THE VALUES FROM THE 'EXPECTED JSON FORMAT' BELOW. You MUST generate a unique lead_score, reason, and signals based ONLY on the Website Text.
 
     You MUST return ONLY a raw JSON object that strictly matches this exact structure. Do not include markdown, code blocks, or extra text.
     
     EXPECTED JSON FORMAT:
     {{
-      "name": "{company_name}",
+      "name": "Extract_Clean_Brand_Name_Here",
       "domain": "{company_url.replace('https://', '').replace('http://', '').replace('www.', '')}",
-      "industry": "{sales_inputs.get('Industry', 'Unknown')}",
-      "lead_score": 85,
-      "reason": "They are a good fit because they build enterprise software in Pune.",
-      "signals": {{"expansion": "expanding team", "audience": "enterprise clients"}},
-      "confidence_score": 0.9,
+      "industry": "Extract_Industry_Here",
+      "lead_score": 99,
+      "reason": "Write exactly one new, unique sentence here explaining why this specific company matches the user criteria based on their website text.",
+      "signals": {{"unique_feature_found": "description of what you found on their site"}},
+      "confidence_score": 0.99,
       "top_contacts": {json.dumps([{"name": "Unknown", "designation": r, "linkedin_url": "https://linkedin.com/in/unknown", "relevance_score": 80, "rank": 1} for r in sales_inputs.get('Target Roles', ['CTO'])])}
     }}
     """

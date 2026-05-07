@@ -56,10 +56,14 @@ async def background_lead_generator(job_id: str, request: LeadGenerationRequest)
     db = SessionLocal()
     
     try:
+        requested_leads = int(request.sales_inputs.get("Number of Leads Required", 3))
+        
         JOBS_DB[job_id]["status"] = "scraping_google"
         
+        
         # 1. Search Google (Limiting to 3 for testing)
-        companies = search_companies_via_serpapi(request.industry, request.location, num_results=3)
+        companies = search_companies_via_serpapi(request.industry, request.location, num_results=requested_leads)
+        companies = companies[:requested_leads]
         
         if not companies:
             JOBS_DB[job_id]["status"] = "failed"

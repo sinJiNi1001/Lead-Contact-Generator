@@ -13,11 +13,14 @@ load_dotenv()
 
 SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
 
+
 EXCLUDED_DOMAINS = {
-    "glassdoor", "clutch", "goodfirms", "justdial",
-    "ambitionbox", "g2", "capterra", "upcity", "naukri", "indeed",
-    "trustpilot", "yelp", "facebook", "twitter", "instagram", "youtube",
-    "crunchbase", "zoominfo", "apollo"
+    # 1. Enterprise Anti-Bot Fortresses
+    "glassdoor", "g2", "indeed", "naukri", "yelp", 
+    "crunchbase", "zoominfo", "apollo", "trustpilot",
+    
+    # 2. Hard Login Walls (Removed LinkedIn from here)
+    "facebook", "twitter", "instagram", "youtube"
 }
 
 def get_base_domain(url: str) -> str:
