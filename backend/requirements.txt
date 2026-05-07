@@ -1,0 +1,18 @@
+# Web Server & Framework
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+python-dotenv==1.0.1
+
+# Database & Data Validation
+asyncpg==0.29.0
+pydantic==2.7.4
+
+# Task Queue (Background Worker)
+huey==2.5.0
+redis==5.0.4
+
+# Web Scraping & Search APIs
+google-search-results==2.4.2    # Official SerpAPI library
+playwright==1.44.0              # For extracting text from Javascript-heavy websites
+beautifulsoup4==4.12.3          # For cleaning up the extracted HTML text
+httpx==0.27.0                   # For making fast, async HTTP requests to your local Ollama
