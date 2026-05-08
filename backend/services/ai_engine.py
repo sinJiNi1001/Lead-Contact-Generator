@@ -26,14 +26,12 @@ def _sync_ollama_request(prompt: str) -> dict | None:
         "format": "json", 
         "stream": False
     }
-    
     data = json.dumps(payload).encode('utf-8')
     req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
-    
     with urllib.request.urlopen(req, timeout=600.0) as response:
         return json.loads(response.read().decode('utf-8'))
 
-async def analyze_company_with_ai(company_name: str, company_url: str, website_text: str, sales_inputs: dict) -> dict | None:
+async def analyze_company_with_ai(company_name: str, company_url: str, website_text: str, sales_inputs: dict, target_location: str) -> dict | None:
     if not website_text or len(website_text) < 50:
         return {"error": "Not enough website text to analyze."}
 
@@ -58,15 +56,15 @@ async def analyze_company_with_ai(company_name: str, company_url: str, website_t
     5. List top_contacts. Use "Unknown" for names and a dummy URL for LinkedIn.
     
     CRITICAL DATA CLEANLINESS RULES:
-    1. "name": Read the Website Text and URL. Extract ONLY the bare brand/company name. Do NOT use search titles, SEO descriptions, or legal entities (like LLC, Pvt Ltd).
-       - BAD: "Top Software Development Company in Pune"
-       - GOOD: "Mplussoft"
-    2. "domain": Extract ONLY the root domain from the provided URL.
-       - BAD: "https://www.ajackus.com/software"
-       - GOOD: "ajackus.com"
-    3. DIRECTORY FILTER: If the website text describes a list, a directory, or a ranking of other companies, set the lead_score to 0 and set priority to 'N/A'.
+    1. "name": Extract ONLY the bare brand/company name. DO NOT INVENT A NAME. If the website is a blog, news article, or you cannot identify a single clear company, set the name to "INVALID" and lead_score to 0.
+    2. "domain": Extract ONLY the root domain from the provided URL. Do not hallucinate websites.
+    3. LOCATION GEOFENCE: The user only wants companies physically located in "{target_location}". Scan the Website Text for an address or explicit mention of this location. If you cannot confidently verify they are in "{target_location}", YOU MUST set the lead_score to 0.
+    4. DIRECTORY FILTER: If the website text describes a list, a directory, or a ranking of other companies, set the lead_score to 0 and set priority to 'N/A'.
 
     WARNING: DO NOT COPY THE VALUES FROM THE 'EXPECTED JSON FORMAT' BELOW. You MUST generate a unique lead_score, reason, and signals based ONLY on the Website Text.
+    Read the following LinkedIn search snippet. Extract the person's name and their EXACT job title exactly as it is written in the text. Do not translate, alter, or guess the title
+    
+    STRICT RULE: You must ONLY extract a contact if their actual job title on LinkedIn matches the Target Roles provided. If the person is in an unrelated field, DO NOT extract them. If no exact match is found, you MUST return the actual title. Do NOT invent titles or guess.
 
     You MUST return ONLY a raw JSON object that strictly matches this exact structure. Do not include markdown, code blocks, or extra text.
     

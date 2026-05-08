@@ -2,9 +2,14 @@ import os
 import urllib.parse
 import datetime
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, String, Float, Text, Boolean, DateTime, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Float, Text, Boolean, DateTime, ForeignKey, JSON
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+
+from datetime import datetime
+
+
+
 
 # Load variables from the .env file
 load_dotenv()
@@ -25,72 +30,48 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# ==========================================
-# SQLALCHEMY ORM MODELS (Mapped to your exact SQL)
-# ==========================================
 
 # ==========================================
 # SQLALCHEMY ORM MODELS (Mapped to your exact SQL)
 # ==========================================
-
 class Company(Base):
     __tablename__ = "companies"
-    
-    id = Column(Integer, primary_key=True)
-    name = Column(String(255), nullable=False)
-    domain = Column(String(255), unique=True, nullable=False)
-    industry = Column(String(100))
-    location = Column(String(255))
-    size = Column(String(50))
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    domain = Column(String, unique=True, index=True)
+    industry = Column(String)
+    location = Column(String)
     lead_score = Column(Integer)
-    priority = Column(String(50))
+    priority = Column(String)
     reason = Column(Text)
-    signals = Column(JSONB)
+    signals = Column(JSON)
     confidence = Column(Float)
-    source = Column(String(100))
-    date_created = Column(DateTime, default=datetime.datetime.utcnow)
-
-    # Relationships
-    contacts = relationship("Contact", back_populates="company", cascade="all, delete-orphan")
-    activities = relationship("Activity", back_populates="company", cascade="all, delete-orphan")
+    source = Column(String)
+    
+    contacts = relationship("Contact", back_populates="company")
 
 class Contact(Base):
     __tablename__ = "contacts"
-    
-    id = Column(Integer, primary_key=True)
-    company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"))
-    name = Column(String(255), nullable=False)
+    id = Column(Integer, primary_key=True, index=True)
+    company_id = Column(Integer, ForeignKey("companies.id"))
+    name = Column(String(255))
     designation = Column(String(255))
-    linkedin_url = Column(String(500), unique=True, nullable=False)
-    relevance_score = Column(Integer)
-    rank = Column(Integer)
-    primary_flag = Column(Boolean, default=False)
-    contact_status = Column(String(50), default='New')
-    last_contact_date = Column(DateTime)
-
-    # Relationships
-    company = relationship("Company", back_populates="contacts")
-    activities = relationship("Activity", back_populates="contact")
-
-class Activity(Base):
-    __tablename__ = "activities"
     
-    id = Column(Integer, primary_key=True)
-    company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"))
-    contact_id = Column(Integer, ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True)
-    action = Column(String(100))
-    notes = Column(Text)
-    date = Column(DateTime, default=datetime.datetime.utcnow)
+    linkedin_url = Column(String(500), unique=True, index=True) 
+    relevance_score = Column(Integer, nullable=True)
+    rank = Column(Integer, nullable=True)
 
-    # Relationships
-    company = relationship("Company", back_populates="activities")
-    contact = relationship("Contact", back_populates="activities")
+    contact_status = Column(String(50), default="New") 
+    last_contact_date = Column(DateTime, nullable=True)
+    notes = Column(Text, nullable=True)
+    follow_up_date = Column(DateTime, nullable=True)
+    
+    company = relationship("Company", back_populates="contacts")
 
 class SearchHistory(Base):
     __tablename__ = "search_history"
-    
-    id = Column(Integer, primary_key=True)
-    user_name = Column(String(100))
-    input_parameters = Column(JSONB)
-    date = Column(DateTime, default=datetime.datetime.utcnow)
+    id = Column(Integer, primary_key=True, index=True)
+    user_name = Column(String)
+    input_parameters = Column(JSON)
     leads_generated = Column(Integer)
+    timestamp = Column(DateTime, default=datetime.utcnow)

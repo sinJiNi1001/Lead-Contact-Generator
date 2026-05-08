@@ -1,12 +1,19 @@
 import sys
 import asyncio
 import uuid
+import io
+import csv
+from sqlalchemy.orm import joinedload
+
+from urllib.parse import urlparse
 
 # CRITICAL FIX FOR WINDOWS PLAYWRIGHT + FASTAPI
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from fastapi import FastAPI, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 # Import our database setup and relational models
@@ -19,23 +26,17 @@ from services.enrichment import find_linkedin_contacts
 
 app = FastAPI(title="Lead Generation API")
 
-# Add this import at the top
-from fastapi.middleware.cors import CORSMiddleware
-
-# Add this block right after defining the app!
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], # React ports
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ==========================================
-# EPHEMERAL JOB TRACKER (For React Loading Screens)
+# EPHEMERAL JOB TRACKER
 # ==========================================
-# We keep the live status in memory so React can poll it fast,
-# while the actual finalized lead data gets saved permanently to PostgreSQL.
 JOBS_DB = {}
 
 # ==========================================
@@ -46,24 +47,22 @@ class LeadGenerationRequest(BaseModel):
     location: str
     sales_inputs: dict
 
+class ContactUpdate(BaseModel):
+    contact_status: str | None = None
+    notes: str | None = None
+
 # ==========================================
 # THE BACKGROUND ENGINE (with PostgreSQL)
 # ==========================================
 async def background_lead_generator(job_id: str, request: LeadGenerationRequest):
-    """
-    Runs silently in the background: Scrapes -> AI Analyzes -> Enriches -> Saves to DB.
-    """
     db = SessionLocal()
     
     try:
         requested_leads = int(request.sales_inputs.get("Number of Leads Required", 3))
-        
         JOBS_DB[job_id]["status"] = "scraping_google"
         
-        
-        # 1. Search Google (Limiting to 3 for testing)
-        companies = search_companies_via_serpapi(request.industry, request.location, num_results=requested_leads)
-        companies = companies[:requested_leads]
+        # Fetch 15 results so we have backups if the AI rejects some
+        companies = search_companies_via_serpapi(request.industry, request.location, num_results=15)
         
         if not companies:
             JOBS_DB[job_id]["status"] = "failed"
@@ -71,13 +70,25 @@ async def background_lead_generator(job_id: str, request: LeadGenerationRequest)
             return
 
         JOBS_DB[job_id]["status"] = "analyzing_ai"
-        
         analyzed_leads = []
-        leads_saved_count = 0
         
-        # 2. Scrape Websites & Ask AI
         for company in companies:
-            print(f"\nProcessing: {company['name']}...")
+            if len(analyzed_leads) >= requested_leads:
+                print(f"\n🎯 Target of {requested_leads} valid leads reached! Stopping engine.")
+                break
+                
+            # STRICT HOMEPAGE EXTRACTOR: Strip away deep links and sub-pages
+            raw_url = company["url"]
+            try:
+                # Add schema if missing so urlparse works correctly
+                if not raw_url.startswith('http'):
+                    raw_url = 'https://' + raw_url
+                parsed = urlparse(raw_url)
+                clean_root_domain = parsed.netloc.replace('www.', '')
+            except:
+                clean_root_domain = raw_url
+
+            print(f"\nProcessing: {company['name']} ({clean_root_domain})...")
             text = await extract_website_text(company["url"])
             
             if not text:
@@ -85,37 +96,30 @@ async def background_lead_generator(job_id: str, request: LeadGenerationRequest)
                 
             analysis = await analyze_company_with_ai(
                 company_name=company["name"],
-                company_url=company["url"],
+                company_url=f"https://{clean_root_domain}", # Feed AI the clean homepage
                 website_text=text,
-                sales_inputs=request.sales_inputs
+                sales_inputs=request.sales_inputs,
+                target_location=request.location
             )
             
-            if analysis:
-                JOBS_DB[job_id]["status"] = f"enriching_{company['name']}"
+            if analysis and analysis.get("lead_score", 0) >= 50:
+                clean_company_name = analysis.get("name", company["name"])
+                JOBS_DB[job_id]["status"] = f"enriching_{clean_company_name}"
                 
-                # 3. Enrich Contacts via Google X-Ray
                 target_roles = request.sales_inputs.get("Target Roles", ["CTO", "CEO"])
-                real_contacts = find_linkedin_contacts(company["name"], target_roles)
+                real_contacts = find_linkedin_contacts(clean_company_name, target_roles)
                 
-                if real_contacts:
-                    analysis["top_contacts"] = real_contacts
-                    
-                analyzed_leads.append(analysis)
+                final_new_contacts = []
                 
-                # ==========================================
-                # 4. SAVE TO POSTGRESQL RELATIONAL TABLES
-                # ==========================================
-                domain = analysis.get("domain", "").lower().strip()
-                
-                # Check if Company already exists to prevent duplicate rows
-                existing_company = db.query(Company).filter(Company.domain == domain).first()
+                # Check DB for existing company using the STRICT ROOT DOMAIN
+                existing_company = db.query(Company).filter(Company.domain == clean_root_domain).first()
                 
                 if not existing_company:
                     new_company = Company(
-                        name=analysis.get("name"),
-                        domain=domain,
-                        industry=analysis.get("industry"),
-                        location=request.location,
+                        name=clean_company_name,
+                        domain=clean_root_domain,      # Forces the clean homepage link!
+                        industry=request.industry,     # Forces what you typed in the form!
+                        location=request.location,     # Forces what you typed in the form!
                         lead_score=analysis.get("lead_score"),
                         priority=analysis.get("priority", "Medium"),
                         reason=analysis.get("reason"),
@@ -124,19 +128,21 @@ async def background_lead_generator(job_id: str, request: LeadGenerationRequest)
                         source="AI_Pipeline"
                     )
                     db.add(new_company)
-                    db.flush() # Generates the new ID without fully committing yet
-                    
+                    db.flush() 
                     company_db_id = new_company.id
-                    leads_saved_count += 1
                 else:
                     company_db_id = existing_company.id
 
-                # Save the new Contacts (checking for duplicate LinkedIn URLs)
+                # Deduplicate & Save Contacts
                 if real_contacts:
+                    seen_urls = set() 
                     for contact in real_contacts:
                         linkedin_url = contact.get("linkedin_url")
                         
                         if linkedin_url and "unknown" not in linkedin_url.lower():
+                            if linkedin_url in seen_urls:
+                                continue 
+                                
                             existing_contact = db.query(Contact).filter(Contact.linkedin_url == linkedin_url).first()
                             
                             if not existing_contact:
@@ -146,73 +152,130 @@ async def background_lead_generator(job_id: str, request: LeadGenerationRequest)
                                     designation=contact.get("designation"),
                                     linkedin_url=linkedin_url,
                                     relevance_score=contact.get("relevance_score"),
-                                    rank=contact.get("rank")
+                                    rank=contact.get("rank"),
+                                    contact_status="New"
                                 )
                                 db.add(new_contact)
+                                seen_urls.add(linkedin_url)
+                                final_new_contacts.append(contact) 
                 
-                # Commit this company and its contacts to the DB safely
                 db.commit() 
-
-        # 5. Log the overall Search History
-        history_log = SearchHistory(
-            user_name="Admin", # Hardcoded until you add user auth later
-            input_parameters=request.sales_inputs,
-            leads_generated=leads_saved_count
-        )
-        db.add(history_log)
-        db.commit()
-
-        # 6. Update the live React tracker with final JSON
+                analysis["domain"] = clean_root_domain 
+                analysis["top_contacts"] = final_new_contacts 
+                
+                if len(final_new_contacts) > 0:
+                    analyzed_leads.append(analysis)
+        
         JOBS_DB[job_id]["status"] = "completed"
         JOBS_DB[job_id]["results"] = analyzed_leads
-        print(f"\n✅ Job {job_id} Complete! Saved {leads_saved_count} new companies to PostgreSQL.")
-
+        print(f"✅ Job {job_id} Complete! Saved {len(analyzed_leads)} leads.")            
     except Exception as e:
-        db.rollback() # If something crashes, undo the database transaction to prevent corruption
+        db.rollback() 
         JOBS_DB[job_id]["status"] = "failed"
         JOBS_DB[job_id]["error"] = str(e)
+        print(f"❌ Background task failed: {e}")
     finally:
-        db.close() # Always close the connection back to the database pool
+        db.close()
 
 # ==========================================
-# THE API ENDPOINTS (React talks to these)
+# THE API ENDPOINTS
 # ==========================================
 
 @app.get("/")
 async def root():
-    """Health check for the server."""
     return {"message": "Lead Generation API is awake and running!"}
 
 @app.post("/api/generate-leads")
 async def start_lead_generation(request: LeadGenerationRequest, background_tasks: BackgroundTasks):
-    """
-    React calls this first. It creates a job ticket and starts the AI.
-    """
     job_id = str(uuid.uuid4())
-    
     JOBS_DB[job_id] = {
         "status": "queued",
         "results": [],
         "error": None
     }
-    
     background_tasks.add_task(background_lead_generator, job_id, request)
-    
     return {"message": "Job started", "job_id": job_id}
 
 @app.get("/api/jobs/{job_id}")
 async def check_job_status(job_id: str):
-    """
-    React calls this every 3 seconds to check loading screen progress.
-    """
     if job_id not in JOBS_DB:
         return {"error": "Job not found."}
-        
     return JOBS_DB[job_id]
 
 @app.get("/api/jobs")
 async def get_all_jobs():
-    """
-    ADMIN TOOL: View all active jobs in memory.
-    """
     return JOBS_DB
+
+@app.put("/api/contacts/{contact_id}")
+async def update_contact(contact_id: int, payload: ContactUpdate):
+    """Updates CRM status and notes for a specific contact."""
+    db = SessionLocal()
+    contact = db.query(Contact).filter(Contact.id == contact_id).first()
+    if contact:
+        if payload.contact_status: contact.contact_status = payload.contact_status
+        if payload.notes is not None: contact.notes = payload.notes
+        db.commit()
+    db.close()
+    return {"message": "Updated"}
+
+@app.get("/api/export")
+async def export_leads_csv():
+    """Generates a CSV of all saved leads and contacts."""
+    db = SessionLocal()
+    contacts = db.query(Contact, Company).join(Company).all()
+    
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Company", "Domain", "Contact Name", "Designation", "LinkedIn", "Status", "Notes"])
+    
+    for contact, company in contacts:
+        writer.writerow([company.name, company.domain, contact.name, contact.designation, contact.linkedin_url, contact.contact_status, contact.notes])
+        
+    db.close()
+    output.seek(0)
+    
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=leads_export.csv"}
+    )
+    
+@app.get("/api/history")
+async def get_crm_history():
+    """Fetches all saved companies and contacts for the CRM History tab."""
+    db = SessionLocal()
+    try:
+        companies = db.query(Company).options(joinedload(Company.contacts)).all()
+        
+        history_results = []
+        for comp in companies:
+            if not comp.contacts:
+                continue 
+                
+            history_results.append({
+                "id": comp.id,
+                "name": comp.name,
+                "domain": comp.domain,
+                "industry": comp.industry,
+                
+                # FIX: Added the location field so the frontend doesn't say "Unknown"
+                "location": comp.location, 
+                
+                "lead_score": comp.lead_score,
+                "reason": comp.reason,
+                "top_contacts": [
+                    {
+                        "id": c.id, 
+                        "name": c.name,
+                        "designation": c.designation,
+                        "linkedin_url": c.linkedin_url,
+                        "contact_status": c.contact_status,
+                        "notes": c.notes
+                    } for c in comp.contacts
+                ]
+            })
+            
+        history_results.sort(key=lambda x: x["lead_score"], reverse=True)
+        return history_results
+    finally:
+        db.close()
