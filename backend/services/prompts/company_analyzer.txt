@@ -26,6 +26,12 @@ CRITICAL INSTRUCTIONS & RULES:
    - You MUST instantly REJECT (Score 0) any website that is an encyclopedia (Wikipedia, Britannica), a dictionary, an educational university (e.g., .edu domains), a news article, a blog post, or a generic directory (like YellowPages).
    - The website MUST belong to a specific, commercial B2B or B2C business that sells a product or service. If it is purely informational, score it 0.
 
+OFFICIAL WEBSITE VERIFICATION (CRITICAL):
+- You are being provided with the website URL that this text was scraped from.
+- You MUST verify that this URL is the OFFICIAL, primary corporate homepage of the company you are extracting.
+- If the text implies this website is a news publication, a directory, a job board, a PR release aggregator (like PRNewswire), an event page, or a third-party blog talking ABOUT the company, you MUST REJECT it. 
+- Set "lead_score" to 0 and "reason" to "Third-party site or directory, not the official company domain."
+
 JSON OUTPUT FORMAT:
 {
     "name": "Clean, official company name without legal suffixes like LLC or Pvt Ltd",

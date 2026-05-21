@@ -3,9 +3,8 @@ fastapi
 uvicorn[standard]
 pydantic
 
-# Database
+# Database (SQLite is built into Python, so we only need the ORM)
 SQLAlchemy
-psycopg2-binary
 
 # AI Engine
 groq

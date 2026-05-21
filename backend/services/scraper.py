@@ -58,13 +58,14 @@ def is_valid_company_url(domain: str, url: str, title: str) -> bool:
         
     return True
 
-def search_companies_via_serpapi(industry: str, location: str, num_results: int = 30) -> list:
+def search_companies_via_serpapi(industry: str, location: str, num_results: int = 30, start_page: int = 0) -> list:
     if not SERPAPI_API_KEY:
         raise ValueError("CRITICAL: SERPAPI_API_KEY is missing from your .env file.")
 
     # 👇 2. THE NEW GOOGLE DORK 👇 
     # Notice we added -top -best -list -directory to natively block blogs!
-    query = f'"{industry}" companies OR business in "{location}" -jobs -top -best -list -directory -site:linkedin.com -site:glassdoor.com -site:crunchbase.com -site:zoominfo.com -site:justdial.com -site:indiamart.com -site:ambitionbox.com -site:clutch.co -course -academy -education -dictionary'
+    # Change your query string to include these:
+    query = f'"{industry}" companies OR business in "{location}" -jobs -top -best -directory -course -academy -event -meetup -community'
     
     
     print(f"🔍 Searching Google for: '{query}'...")
@@ -72,9 +73,12 @@ def search_companies_via_serpapi(industry: str, location: str, num_results: int 
     params = {
         "engine": "google",
         "q": query,
-        "api_key": SERPAPI_API_KEY,
-        "num": num_results + 20, # Ask for extra so we have plenty of backups
-        "gl": "in",
+        "api_key": SERPAPI_API_KEY, # Ask for extra so we have plenty of backups
+        # 👇 ADD THIS: Force Google to give us 50 results!
+        "gl": "in",          # (Optional but recommended) Geolocation: India
+        "hl": "en",
+        "num": 50,  # We can keep this at 10 to process in batches
+        "start": start_page 
     }
     
     forbidden_domains = [
@@ -83,7 +87,12 @@ def search_companies_via_serpapi(industry: str, location: str, num_results: int 
         "justdial.com", "indiamart.com", "glassdoor.com",
         "screener.in", "ambitionbox.com", "clutch.co",
         "khanacademy.org", "coursera.org", "udemy.com", 
-        "merriam-webster.com" # Also add dictionaries!
+        "merriam-webster.com", "exportersindia.com", "zixinindia.com", "townscript.com", 
+        "zaubacorp.com", "tofler.in", "instafinancials.com", 
+        "community.sap.com", "tradeindia.com", "jdmagicbox.com",
+        "enrollbusiness.com", "financialcontent.com", 
+        "prweb.com", "globenewswire.com", "prnewswire.com",
+        "startupindia.gov.in"
     ]
 
     try:

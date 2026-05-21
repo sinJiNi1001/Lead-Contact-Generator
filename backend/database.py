@@ -1,38 +1,31 @@
 import os
-import urllib.parse
-import datetime
-from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, String, Float, Text, Boolean, DateTime, ForeignKey, JSON
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import create_engine, Column, Integer, String, Float, Text, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
-
+from sqlalchemy import event
 from datetime import datetime
 
+# 1. The SQLite connection string (creates a file in the same folder)
+DATABASE_URL = "sqlite:///./leads_engine.db"
 
+# 2. Engine setup (check_same_thread=False is required for FastAPI background tasks)
+engine = create_engine(
+    DATABASE_URL, connect_args={"check_same_thread": False}
+)
 
+# 3. 🌟 THE MAGIC COMMAND 🌟 Enable WAL mode for SQLite concurrency
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.close()
 
-# Load variables from the .env file
-load_dotenv()
-
-# 1. Grab the raw password from your .env file
-raw_password = os.getenv("DB_PASSWORD")
-
-if not raw_password:
-    raise ValueError("DB_PASSWORD is missing from your .env file!")
-
-# 2. Automatically encode special characters (like the '@' symbol)
-encoded_password = urllib.parse.quote_plus(raw_password)
-
-# 3. Construct the final connection string safely
-DATABASE_URL = f"postgresql://postgres:{encoded_password}@localhost:5432/lead_intel_db"
-
-engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
 # ==========================================
-# SQLALCHEMY ORM MODELS (Mapped to your exact SQL)
+# SQLALCHEMY ORM MODELS
 # ==========================================
 class Company(Base):
     __tablename__ = "companies"
@@ -44,7 +37,7 @@ class Company(Base):
     lead_score = Column(Integer)
     priority = Column(String)
     reason = Column(Text)
-    signals = Column(JSON)
+    signals = Column(JSON)  # Standard JSON works perfectly in SQLite via SQLAlchemy
     confidence = Column(Float)
     source = Column(String)
     

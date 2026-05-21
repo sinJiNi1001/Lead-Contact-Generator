@@ -15,8 +15,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-# Import our database setup and relational models (PostgreSQL)
-from database import SessionLocal, Company, Contact, SearchHistory
+
+from database import SessionLocal, engine, Base, Company, Contact, SearchHistory
+
+Base.metadata.create_all(bind=engine)
 
 # Import our individual engine services
 from services.scraper import search_companies_via_serpapi, extract_website_text
@@ -87,7 +89,7 @@ async def background_lead_generator(job_id: str, request: LeadGenerationRequest)
         JOBS_DB[job_id]["status"] = "scraping_google"
         
         # Fetch 15 results so we have backups if the AI rejects some
-        companies = search_companies_via_serpapi(request.industry, request.location, num_results=15)
+        companies = search_companies_via_serpapi(request.industry, request.location, num_results=50)
         
         if not companies:
             JOBS_DB[job_id]["status"] = "failed"
@@ -129,16 +131,25 @@ async def background_lead_generator(job_id: str, request: LeadGenerationRequest)
             )
             
             if analysis and analysis.get("lead_score", 0) >= 50:
-                clean_company_name = analysis.get("name", company["name"])
-                JOBS_DB[job_id]["status"] = f"enriching_{clean_company_name}"
+                # 1. Get the clean name from the AI
+                clean_company_name = analysis.get("name")
                 
-                if analysis and analysis.get("lead_score", 0) >= 50:
-                    clean_company_name = analysis.get("name") 
-                
-                # If the AI somehow failed to return a name, fall back to the domain, NOT the messy title
+                # 2. If the AI somehow failed to return a name, fall back to the domain
                 if not clean_company_name or clean_company_name == "":
                     clean_company_name = clean_root_domain.split('.')[0].capitalize()
+
+                # 🛡️ 3. THE THIRD-PARTY MISMATCH GUARDRAIL 🛡️
+                # Check if the domain name has at least some overlap with the company name
+                domain_core = clean_root_domain.split('.')[0].lower()
+                name_core = clean_company_name.lower().replace(" ", "").replace("-", "")
                 
+                # If the first 4 letters of the domain aren't in the company name (and vice versa)
+                if domain_core[:4] not in name_core and name_core[:4] not in domain_core:
+                    print(f"   🛡️ Guardrail triggered: '{clean_company_name}' does not match domain '{clean_root_domain}'. Rejecting third-party site.")
+                    continue # Skip this company and move to the next Google result
+                
+                # 4. Proceed with enrichment
+                JOBS_DB[job_id]["status"] = f"enriching_{clean_company_name}"
                 print(f"📦 RAW FRONTEND DATA: {request.sales_inputs}")
                 
                 # Directly call the LinkedIn scraper
@@ -173,6 +184,7 @@ async def background_lead_generator(job_id: str, request: LeadGenerationRequest)
                         signals=analysis.get("signals"),
                         confidence=analysis.get("confidence_score"),
                         source="AI_Pipeline"
+                    
                     )
                     db.add(new_company)
                     db.flush() 
@@ -190,32 +202,46 @@ async def background_lead_generator(job_id: str, request: LeadGenerationRequest)
                             if linkedin_url in seen_urls:
                                 continue 
                                 
-                            existing_contact = db.query(Contact).filter(Contact.linkedin_url == linkedin_url).first()
-                            
-                            if not existing_contact:
-                                new_contact = Contact(
-                                    company_id=company_db_id,
-                                    name=contact.get("name"),
-                                    designation=contact.get("designation"),
-                                    linkedin_url=linkedin_url,
-                                    relevance_score=contact.get("relevance_score"),
-                                    rank=contact.get("rank"),
-                                    contact_status="New"
-                                )
-                                db.add(new_contact)
-                                seen_urls.add(linkedin_url)
-                                final_new_contacts.append(contact) 
-                
-                db.commit() 
-                analysis["domain"] = clean_root_domain 
-                analysis["top_contacts"] = final_new_contacts 
-                
-                # 👇 THE BLANK COMPANY GUARD 👇
-                # We only count this company against the quota if we successfully saved contacts
-                if len(final_new_contacts) > 0:
-                    analyzed_leads.append(analysis)
-                    print(f"✅ Saved Company {len(analyzed_leads)}/{requested_companies}: {clean_company_name} ({len(final_new_contacts)} contacts)")
-        
+                            # 5. 🚀 SAVE THE COMPANY (Even if no contacts are found!) 🚀
+                existing_company = db.query(Company).filter(Company.domain == clean_root_domain).first()
+                if not existing_company:
+                    new_comp = Company(
+                        name=clean_company_name,
+                        domain=clean_root_domain,
+                        industry=request.industry,
+                        location=request.location,
+                        lead_score=analysis.get("lead_score", 0),
+                        reason=analysis.get("reason", "")
+                    )
+                    db.add(new_comp)
+                    db.commit()
+                    db.refresh(new_comp)
+                    company_db_id = new_comp.id
+                else:
+                    company_db_id = existing_company.id
+
+                # 6. SAVE CONTACTS (Only if the AI actually found valid ones)
+                if real_contacts:
+                    for c in real_contacts:
+                        existing_contact = db.query(Contact).filter(Contact.linkedin_url == c.get("linkedin_url")).first()
+                        if not existing_contact:
+                            new_contact = Contact(
+                                company_id=company_db_id,
+                                name=c.get("name", "Unknown"),
+                                designation=c.get("designation", "Unknown"),
+                                linkedin_url=c.get("linkedin_url", ""),
+                                
+                            )
+                            db.add(new_contact)
+                    db.commit()
+                else:
+                    print(f"   ⚠️ No valid contacts found for {clean_company_name}, but saving company anyway.")
+                    
+                analysis["domain"] = clean_root_domain
+                analysis["top_contacts"] = real_contacts if real_contacts else []    
+
+                # 7. Add to our quota list so the loop knows we successfully found a company
+                analyzed_leads.append(analysis)
         JOBS_DB[job_id]["status"] = "completed"
         JOBS_DB[job_id]["results"] = analyzed_leads
         print(f"🎉 Job {job_id} Complete! Pipeline successfully extracted data for {len(analyzed_leads)} companies.")            

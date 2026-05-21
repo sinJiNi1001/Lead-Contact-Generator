@@ -18,16 +18,25 @@ async def find_linkedin_contacts(company_name: str, target_roles: list, target_l
     if not SERPAPI_API_KEY:
         print("⚠️ SERPAPI_API_KEY missing in .env. Cannot find contacts.")
         return []
+    
+    clean_target_roles = [role.strip().title() for role in target_roles]
 
     found_contacts = []
     
     print(f"🔍 Deep Scanning for executives at {company_name} in {target_location}...")
 
     # We only look for the top 2 roles to save API credits
-    for role in target_roles[:2]:
+    for role in clean_target_roles[:2]:
+        # Change how you build the role query
+        role_query = " OR ".join([f'"{r}"' for r in target_roles]) 
         
-        # Inject the target_location into the Google query
-        query = f'site:linkedin.com/in/ "{role}" "{company_name}" "{target_location}"'
+        if "," in target_location:
+            broad_location = target_location.split(",")[-1].strip()
+        else:
+            broad_location = target_location
+
+        # Update the final dork to look like this:
+        query = f'site:linkedin.com/in "{company_name}" ({role_query}) "{broad_location}"'
         
         url = "https://serpapi.com/search"
         params = {
@@ -63,20 +72,37 @@ async def find_linkedin_contacts(company_name: str, target_roles: list, target_l
                             
                             # 👇 SEMANTIC BOUNCER CHECK 👇
                             if extracted_data.get('is_match') is True:
+                                
+                                # 🛡️ DYNAMIC GARBAGE TITLE GUARDRAIL 🛡️
+                                bad_words = ["experience", "education", "skills", "location", "past", "previous"]
+                                
+                                # Only block 'intern' or 'trainee' if the user didn't specifically ask for them
+                                target_roles_lower = [r.lower() for r in target_roles]
+                                if not any("intern" in r or "trainee" in r for r in target_roles_lower):
+                                    bad_words.extend(["intern", "internship", "trainee", "student", "fresher"])
+
+                                designation_lower = extracted_data.get('designation', '').lower()
+                                
+                                if any(word in designation_lower for word in bad_words):
+                                    print(f"   🛡️ Python Guardrail Rejected Title: '{extracted_data.get('designation')}'")
+                                    continue # Skip this lead immediately
+                                
                                 print(f"   🎯 AI Verified & Captured: {extracted_data['name']} ({extracted_data['designation']})")
                                 
                                 found_contacts.append({
                                     "name": extracted_data['name'],
                                     "designation": extracted_data['designation'],
                                     "linkedin_url": profile_url,
-                                    "relevance_score": 95, 
+                                    "relevance_score": 80, 
                                     "rank": len(found_contacts) + 1,
                                     "is_match": True
                                 })
                                 # Notice there is NO 'break' statement here! 
                                 # It will keep looping to find more matches!
                             else:
-                                print(f"   🚫 AI Rejected Google Result for '{extracted_data['name']}' (Not a semantic match)")
+                                # 👇 PRINT THE AI'S EXPLANATION 👇
+                                reason = extracted_data.get('reason', 'No semantic match.')
+                                print(f"   🚫 AI Rejected: '{extracted_data.get('name', 'Unknown')}' - {reason}")
                         else:
                             print(f"   🚫 AI Rejected Google Result (Title missing or invalid)")
                         
