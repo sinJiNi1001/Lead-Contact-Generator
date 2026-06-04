@@ -26,6 +26,11 @@ VERIFICATION RULES (is_match must pass ALL):
    - ACCEPT: Location is completely hidden (benefit of the doubt).
 4. ZERO HALLUCINATION: If in doubt, throw it out.
 
+CRITICAL RULE: You must ONLY return a contact if the snippet proves they CURRENTLY work at the target company. 
+1. If the snippet says "Past:", "Previous:", or shows an end date (e.g., "2019 - 2022") for the target company, YOU MUST REJECT THEM.
+2. If the person's current headline lists a DIFFERENT company than the target company, YOU MUST REJECT THEM.
+3. If you are not 100% certain they work there right now, return status: "REJECTED".
+
 OUTPUT FORMAT (JSON ONLY):
 {
   "name": "First Last (or empty string)",

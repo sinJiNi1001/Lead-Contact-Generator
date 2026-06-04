@@ -86,6 +86,10 @@ EXCLUDED_DOMAINS = {
     "financialexpress.com", "economictimes.indiatimes.com", "livemint.com",
     "business-standard.com", "ndtv.com", "thehindu.com", "hindustantimes.com",
     "ai.google", "search.google", "cloud.google",
+    "indianyellowpages.com", "exportersindia.com", "dialme24.com", 
+    "jdmagicbox.com", "fundoodata.com", "tofler.in", "zaubacorp.com", 
+    "quickcompany.in", "thecompanycheck.com", "grotal.com", 
+    "businessdir.in", "dir.indiamart.com"
 }
 
 # ── Post-AI aggregator guard ──────────────────────────────────────────────────
