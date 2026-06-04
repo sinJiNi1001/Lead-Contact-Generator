@@ -30,6 +30,7 @@ export default function App() {
   const [numLeads, setNumLeads] = useState(3);
   const [targetRoles, setTargetRoles] = useState('CTO, CEO');
   const [keywords, setKeywords] = useState('SaaS, B2B');
+  
 
   const loadHistory = async () => {
     try {
@@ -152,7 +153,7 @@ export default function App() {
             </div>
 
             <div>
-              <label style={labelStyle}><MapPin size={14} /> Search Location</label>
+              <label style={labelStyle}><MapPin size={14} /> Enter City [city mandatory, location optional]</label>
               <input required type="text" value={location} onChange={e => setLocation(e.target.value)} style={inputStyle} />
             </div>
 

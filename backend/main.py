@@ -3,6 +3,8 @@ import asyncio
 import uuid
 import io
 import csv
+import os
+import datetime
 from sqlalchemy.orm import joinedload
 from urllib.parse import urlparse
 
@@ -14,6 +16,7 @@ from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from datetime import datetime
 
 
 from database import SessionLocal, engine, Base, Company, Contact, SearchHistory
@@ -35,6 +38,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class DualLogger(object):
+    def __init__(self, filename="debug.log"):
+        self.terminal = sys.stdout
+        # Open in append mode so it keeps a running history
+        self.log = open(filename, "a", encoding="utf-8")
+        
+        # Add a startup timestamp to separate sessions in the log file
+        startup_marker = f"\n\n{'='*50}\n🚀 SERVER STARTED: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n{'='*50}\n"
+        self.terminal.write(startup_marker)
+        self.log.write(startup_marker)
+        self.log.flush()
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush() # Force write to disk immediately
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+
+# Intercept all print statements and errors, mirroring them to debug.log
+sys.stdout = DualLogger("debug.log")
+sys.stderr = sys.stdout
 # ==========================================
 # EPHEMERAL JOB TRACKER
 # ==========================================
@@ -51,6 +78,7 @@ class LeadGenerationRequest(BaseModel):
 class ContactUpdate(BaseModel):
     contact_status: str | None = None
     notes: str | None = None
+    follow_up_date: str | None = None
 
 # ==========================================
 # THE BACKGROUND ENGINE (PostgreSQL)
@@ -118,9 +146,12 @@ async def background_lead_generator(job_id: str, request: LeadGenerationRequest)
 
             print(f"\nProcessing: {company['name']} ({clean_root_domain})...")
             text = await extract_website_text(company["url"])
-            
-            if not text:
-                continue
+
+            # If scraping failed (bot protection, JS timeout, etc.), use an empty string.
+            # passes_basic_heuristic() returns True for empty text so the company still
+            # gets sent to the AI, which will likely score it 0 without content — but
+            # at least the company isn't silently discarded due to a scrape failure.
+            text = text or ""
                 
             analysis = await analyze_company_with_ai(
                 company_name=company["name"],
@@ -138,113 +169,106 @@ async def background_lead_generator(job_id: str, request: LeadGenerationRequest)
                 if not clean_company_name or clean_company_name == "":
                     clean_company_name = clean_root_domain.split('.')[0].capitalize()
 
-                # 🛡️ 3. THE THIRD-PARTY MISMATCH GUARDRAIL 🛡️
-                # Check if the domain name has at least some overlap with the company name
-                domain_core = clean_root_domain.split('.')[0].lower()
-                name_core = clean_company_name.lower().replace(" ", "").replace("-", "")
-                
-                # If the first 4 letters of the domain aren't in the company name (and vice versa)
-                if domain_core[:4] not in name_core and name_core[:4] not in domain_core:
-                    print(f"   🛡️ Guardrail triggered: '{clean_company_name}' does not match domain '{clean_root_domain}'. Rejecting third-party site.")
-                    continue # Skip this company and move to the next Google result
-                
-                # 4. Proceed with enrichment
+                # 3. Proceed with enrichment
+                # NOTE: The old domain-name mismatch guardrail was removed.
+                # It rejected legitimate companies whose names don't literally
+                # appear in their domain (e.g. "Equations Work" → eqw.ai,
+                # "Augmented Transformations" → augtrans.com).
+                # Third-party sites are already blocked structurally by
+                # EXCLUDED_DOMAINS, the .gov TLD guard, and the post-AI
+                # aggregator check in scraper.py — this check was redundant.
                 JOBS_DB[job_id]["status"] = f"enriching_{clean_company_name}"
                 print(f"📦 RAW FRONTEND DATA: {request.sales_inputs}")
-                
-                # Directly call the LinkedIn scraper
+
+                # 4. LinkedIn enrichment
                 raw_contacts = await find_linkedin_contacts(clean_company_name, target_roles, request.location)
-                
-                # THE SEMANTIC AI BOUNCER 
-                real_contacts = []
-                for contact in raw_contacts:
-                    if contact.get("is_match") is True:
-                        real_contacts.append(contact)
-                    else:
-                        print(f"🚫 AI Bouncer Dropped {contact.get('name', 'Unknown')} - Title '{contact.get('designation')}' not a semantic match.")
-                
-                # 👇 THE SPAM FILTER: Cap the contacts at 3 per company 👇
-                # This ensures we don't flood the CRM with 10 executives from one place.
-                real_contacts = real_contacts[:3]
-                
-                final_new_contacts = []
-                
-                # Check DB for existing company using the STRICT ROOT DOMAIN
+
+                # All contacts from find_linkedin_contacts already have is_match=True
+                # (the enrichment layer filters them). Cap at 3 per company.
+                real_contacts = [c for c in raw_contacts if c.get("is_match") is True][:3]
+
+                # 5. Save company to DB (single path — deduped by domain)
                 existing_company = db.query(Company).filter(Company.domain == clean_root_domain).first()
-                
                 if not existing_company:
                     new_company = Company(
                         name=clean_company_name,
-                        domain=clean_root_domain,      # Forces the clean homepage link!
-                        industry=request.industry,     # Forces what you typed in the form!
-                        location=request.location,     # Forces what you typed in the form!
+                        domain=clean_root_domain,
+                        industry=request.industry,
+                        location=request.location,
                         lead_score=analysis.get("lead_score"),
                         priority=analysis.get("priority", "Medium"),
                         reason=analysis.get("reason"),
                         signals=analysis.get("signals"),
                         confidence=analysis.get("confidence_score"),
-                        source="AI_Pipeline"
-                    
+                        source="AI_Pipeline",
                     )
                     db.add(new_company)
-                    db.flush() 
+                    db.flush()
                     company_db_id = new_company.id
                 else:
                     company_db_id = existing_company.id
-
-                # Deduplicate & Save Contacts
+                    
+                # 6. SAVE CONTACTS & CLEAN FOR FRONTEND
+                duplicate_count = 0  
+                
                 if real_contacts:
                     seen_urls = set() 
-                    for contact in real_contacts:
-                        linkedin_url = contact.get("linkedin_url")
-                        
-                        if linkedin_url and "unknown" not in linkedin_url.lower():
-                            if linkedin_url in seen_urls:
-                                continue 
-                                
-                            # 5. 🚀 SAVE THE COMPANY (Even if no contacts are found!) 🚀
-                existing_company = db.query(Company).filter(Company.domain == clean_root_domain).first()
-                if not existing_company:
-                    new_comp = Company(
-                        name=clean_company_name,
-                        domain=clean_root_domain,
-                        industry=request.industry,
-                        location=request.location,
-                        lead_score=analysis.get("lead_score", 0),
-                        reason=analysis.get("reason", "")
-                    )
-                    db.add(new_comp)
-                    db.commit()
-                    db.refresh(new_comp)
-                    company_db_id = new_comp.id
-                else:
-                    company_db_id = existing_company.id
-
-                # 6. SAVE CONTACTS (Only if the AI actually found valid ones)
-                if real_contacts:
+                    clean_frontend_contacts = [] # 👈 1. Create a fresh list for React
+                    
                     for c in real_contacts:
-                        existing_contact = db.query(Contact).filter(Contact.linkedin_url == c.get("linkedin_url")).first()
+                        url = c.get("linkedin_url", "")
+                        
+                        if url and url in seen_urls:
+                            continue # Skip the twin!
+                        if url:
+                            seen_urls.add(url)
+                            
+                        clean_frontend_contacts.append(c) # 👈 2. Only keep the unique ones
+                        
+                        existing_contact = db.query(Contact).filter(Contact.linkedin_url == url).first()
                         if not existing_contact:
                             new_contact = Contact(
                                 company_id=company_db_id,
                                 name=c.get("name", "Unknown"),
                                 designation=c.get("designation", "Unknown"),
-                                linkedin_url=c.get("linkedin_url", ""),
-                                
+                                linkedin_url=url,
+                                notes=c.get("pitch_angle", "")
                             )
                             db.add(new_contact)
+                        else:
+                            duplicate_count += 1  
+                            
                     db.commit()
                 else:
+                    clean_frontend_contacts = []
                     print(f"   ⚠️ No valid contacts found for {clean_company_name}, but saving company anyway.")
-                    
+
+                # 👇 3. Send the CLEAN list to React instead of the raw 'real_contacts'
                 analysis["domain"] = clean_root_domain
-                analysis["top_contacts"] = real_contacts if real_contacts else []    
+                analysis["top_contacts"] = clean_frontend_contacts 
+                analysis["duplicates_hidden"] = duplicate_count
 
                 # 7. Add to our quota list so the loop knows we successfully found a company
                 analyzed_leads.append(analysis)
+                
+        try:
+            new_history = SearchHistory(
+                user_name="Sales User",  # You can change this if you add logins later
+                input_parameters=request.model_dump(),  # Saves Industry, Location, and all Sales Inputs as JSON
+                leads_generated=len(analyzed_leads)
+            )
+            db.add(new_history)
+            db.commit()
+            print(f"✅ Search History logged successfully!")
+        except Exception as hist_err:
+            print(f"⚠️ Failed to log search history: {hist_err}")
+            db.rollback()
+        # 👆 END OF NEW BLOCK 👆
+
         JOBS_DB[job_id]["status"] = "completed"
         JOBS_DB[job_id]["results"] = analyzed_leads
         print(f"🎉 Job {job_id} Complete! Pipeline successfully extracted data for {len(analyzed_leads)} companies.")            
+    
     except Exception as e:
         db.rollback() 
         JOBS_DB[job_id]["status"] = "failed"
@@ -284,12 +308,27 @@ async def get_all_jobs():
 
 @app.put("/api/contacts/{contact_id}")
 async def update_contact(contact_id: int, payload: ContactUpdate):
-    """Updates CRM status and notes for a specific contact."""
+    """Updates CRM status, notes, and dates for a specific contact."""
     db = SessionLocal()
     contact = db.query(Contact).filter(Contact.id == contact_id).first()
     if contact:
-        if payload.contact_status: contact.contact_status = payload.contact_status
-        if payload.notes is not None: contact.notes = payload.notes
+        if payload.contact_status:
+            contact.contact_status = payload.contact_status  # type: ignore[assignment]
+        if payload.notes is not None:
+            contact.notes = payload.notes                    # type: ignore[assignment]
+
+        # Safely parse the date from React and save it to the DB
+        if payload.follow_up_date is not None:
+            if payload.follow_up_date == "":
+                contact.follow_up_date = None                # type: ignore[assignment]
+            else:
+                try:
+                    contact.follow_up_date = datetime.strptime(  # type: ignore[assignment]
+                        payload.follow_up_date, "%Y-%m-%d"
+                    )
+                except ValueError:
+                    pass
+                    
         db.commit()
     db.close()
     return {"message": "Updated"}
@@ -343,7 +382,8 @@ async def get_crm_history():
                         "designation": c.designation,
                         "linkedin_url": c.linkedin_url,
                         "contact_status": c.contact_status,
-                        "notes": c.notes
+                        "notes": c.notes,
+                        "follow_up_date": c.follow_up_date.strftime("%Y-%m-%d") if c.follow_up_date else ""
                     } for c in comp.contacts
                 ]
             })
