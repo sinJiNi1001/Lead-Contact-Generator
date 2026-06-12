@@ -1,4 +1,4 @@
-# Valency AI Lead Generation CRM
+# Lead Contact Generator
 
 Valency AI is an automated, full-stack B2B lead generation pipeline. It leverages LLMs for intelligent business qualification, headless browser automation for data scraping, and a robust FastAPI/SQLite architecture to manage lead tracking.
 
