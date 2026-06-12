@@ -94,7 +94,7 @@ export default function LeadTable({ theme, results, jobStatus, jobId, error, isH
             {/* DUPLICATE PREVENTION ALERT */}
             {company.duplicates_hidden > 0 && (
               <div style={{ background: '#fef3c7', color: '#92400e', padding: '12px 16px', borderRadius: '4px', fontSize: '13px', fontWeight: '600', marginBottom: '16px' }}>
-                🛡️ {company.duplicates_hidden} duplicate contacts were hidden to prevent double-emailing.
+                🛡️ {company.duplicates_hidden} duplicate contacts might be present.
               </div>
             )}
 

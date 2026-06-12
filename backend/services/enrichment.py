@@ -1,3 +1,4 @@
+import asyncio
 import os
 import requests
 from dotenv import load_dotenv
@@ -104,6 +105,8 @@ async def find_linkedin_contacts(
                 target_location,
                 keywords,         # substitutes {keywords} in pitch_angle prompt
             )
+            
+            await asyncio.sleep(6)
 
             # Must return a valid dict with both fields populated
             if not (extracted_data

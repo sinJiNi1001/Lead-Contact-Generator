@@ -29,6 +29,11 @@ RULES (STRICT VERIFICATION):
    - Healthcare content portals (WebMD, Healthline, Practo, 1mg) — Score=0.
    - TRAINING INSTITUTES & COURSE PROVIDERS (SCORE=0, NO EXCEPTIONS): Any site whose primary revenue comes from teaching, coaching, or certifying people. KEY TEST: Does the homepage primarily talk about batch schedules, course fees, student enrollments, placement records, or certifications? If YES → Score=0. "We teach {keywords}" is NOT the same as "We build/sell {keywords}".
 5. URL AUTHORITY CHECK: Use the URL/id field to verify source. A company page at internshala.com, clutch.co, f6s.com, justdial.com, or any aggregator domain must score 0 regardless of text content.
+CRITICAL LOCATION RULE: 
+The user is targeting a highly specific neighborhood: [TARGET_LOCATION]. 
+1. You must scan the website text for addresses, footers, or "Contact Us" details.
+2. If the company is located in Pune, but their office is in Kharadi, Hinjewadi, or Viman Nagar, and the user asked for Baner, YOU MUST REJECT THEM.
+3. Only approve the company if you find evidence they have an office in or adjacent to [TARGET_LOCATION].
 
 SCORING RUBRIC:
 - 0-49 (Low): Irrelevant, directory, training institute, third-party site, regulatory body, or wrong core business.

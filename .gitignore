@@ -23,6 +23,7 @@ dist/
 
 # Logs
 debug.log
+directory.txt
 
 # OS Files
 .DS_Store

@@ -353,7 +353,7 @@ def search_companies_via_serpapi(industry: str, location: str, num_results: int 
     def _make_query(q: str) -> str:
         if _is_country and len(q.split()) <= 3 and "company" not in q.lower():
             q = q + " company"
-        return q + " " + _QUERY_BLOCKLIST
+        return q 
 
     queries_to_try = [_make_query(primary_query)] + [_make_query(q) for q in fallback_queries]
 
