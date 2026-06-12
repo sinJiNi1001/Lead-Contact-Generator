@@ -3,7 +3,7 @@ fastapi
 uvicorn[standard]
 pydantic
 
-# Database (SQLite is built into Python, so we only need the ORM)
+# Database
 SQLAlchemy
 
 # AI Engine
@@ -13,6 +13,7 @@ groq
 requests
 playwright
 beautifulsoup4
+duckduckgo-search
 
 # Environment Variables
 python-dotenv

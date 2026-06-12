@@ -1,3 +1,22 @@
+"""
+===============================================================================
+File: schemas.py
+Project: Lead Contact Generator
+Description: 
+    This module defines the Pydantic models used for data validation, 
+    serialization, and type hinting across the FastAPI application. It acts 
+    as the strict gatekeeper for data entering and leaving the API.
+    
+    Key Responsibilities:
+    - Defines Request models (e.g., scraping parameters, CRM updates) to 
+      ensure incoming JSON payloads are perfectly structured and typed.
+    - Defines Response models to securely format and filter database records 
+      before transmitting them to the React frontend.
+    - Automatically powers the interactive Swagger UI / OpenAPI documentation.
+    - Bridges the gap between SQLAlchemy ORM objects and JSON-serializable 
+      dictionaries (via `orm_mode` or `from_attributes=True`).
+===============================================================================
+"""
 from pydantic import BaseModel, Field
 from typing import List, Optional
 

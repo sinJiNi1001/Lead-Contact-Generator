@@ -1,3 +1,20 @@
+"""
+===============================================================================
+File: services/scraper.py
+Project: Lead Contact Generator
+Description: 
+    The data acquisition engine. This module is responsible for discovering 
+    target companies and extracting raw text from their websites.
+    
+    Key Responsibilities:
+    - Uses DuckDuckGo Search (DDGS) to discover local businesses based on 
+      industry and location keywords.
+    - Utilizes Playwright (Chromium) to execute headless browsing, bypassing 
+      basic anti-bot protections and rendering JavaScript-heavy pages.
+    - Uses BeautifulSoup4 to parse the HTML DOM and extract clean, readable 
+      text while stripping away navigation, footers, and scripts.
+===============================================================================
+"""
 import os
 import sys
 import asyncio

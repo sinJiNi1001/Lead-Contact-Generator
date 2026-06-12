@@ -1,3 +1,19 @@
+/**
+ * ============================================================================
+ * File: Dashboard.jsx
+ * Project: Lead Contact Generator
+ * Description: 
+ * The main landing page/hub of the application. This component manages the 
+ * high-level layout of the application, integrating the side navigation, header, 
+ * and the content switcher.
+ * * Key Responsibilities:
+ * - Provides the primary layout shell (Sidebar/Header/Content Area).
+ * - Manages view-switching logic between the "Live Lead Generator" and the 
+ * "CRM History/Database" tabs.
+ * - Centralizes the theme context to ensure consistent styling (dark/light mode) 
+ * across all child components.
+ * ============================================================================
+ */
 import React from 'react';
 import { Search, Loader2 } from 'lucide-react';
 

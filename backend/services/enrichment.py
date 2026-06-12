@@ -1,3 +1,19 @@
+"""
+===============================================================================
+File: services/enrichment.py
+Project: Lead Contact Generator
+Description: 
+    The contact discovery module. Once a company is qualified by the AI Engine, 
+    this module attempts to locate the key decision-makers.
+    
+    Key Responsibilities:
+    - Executes targeted search queries to find LinkedIn profiles associated 
+      with the specific company domain.
+    - Filters search results for C-Suite, VP, and Director-level job titles 
+      (e.g., CEO, CTO, Head of Sales).
+    - Formats the contact names, designations, and URLs for the CRM database.
+===============================================================================
+"""
 import asyncio
 import os
 import requests

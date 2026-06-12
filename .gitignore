@@ -27,3 +27,28 @@ directory.txt
 
 # OS Files
 .DS_Store
+
+# --- IDEs and Editors ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS Generated Files ---
+Thumbs.db
+Desktop.ini
+.Trashes
+
+# --- Node/NPM Logs & Caches ---
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.eslintcache
+.vite/
+
+# --- Python Additional Caches & Tools ---
+.venv/
+.mypy_cache/
+.ruff_cache/
+pip-log.txt

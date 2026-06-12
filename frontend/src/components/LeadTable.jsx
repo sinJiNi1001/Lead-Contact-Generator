@@ -1,9 +1,30 @@
-import React, { useState } from 'react';
+/**
+ * ============================================================================
+ * File: LeadTable.jsx
+ * Project: Lead Contact Generator
+ * Description: 
+ * The core UI component for displaying, filtering, and managing leads.
+ * It acts as both the "Live Results" view during a scraping job and the 
+ * "CRM History" view for saved database records.
+ * * Key Features:
+ * - Omni-Directional Duplicate Tracking: Automatically detects and visually 
+ * flags duplicate domains (yellow badge) across the entire dataset.
+ * - Smart Search & Filtering: Real-time text filtering across company names, 
+ * domains, and AI-generated reasoning, plus lead status filtering.
+ * - CRM Inline Editing: Allows users to update Follow-up Dates, Statuses, 
+ * and interaction Notes, sending PUT requests back to the FastAPI backend.
+ * - CSV Export: Compiles the currently visible dataset into a formatted 
+ * downloadable spreadsheet.
+ * ============================================================================
+ */
+
+
+import React, { useState, useMemo } from 'react';
 import { Download, Search, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
 import axios from 'axios';
 import StatusPill from './StatusPill';
 
-const API_BASE_URL = 'http://localhost:8000/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
 
 export default function LeadTable({ theme, results, jobStatus, jobId, error, isHistoryView = false }) {
   const isWorking = jobId && jobStatus !== 'completed' && jobStatus !== 'failed';
@@ -11,7 +32,6 @@ export default function LeadTable({ theme, results, jobStatus, jobId, error, isH
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
 
-  // SMART CSV EXPORT 
   const handleExportCSV = () => {
     const headers = ["Company", "Domain", "Industry", "Location", "Score", "Reason", "Contact Name", "Designation", "LinkedIn", "Status", "Notes", "Follow Up Date"];
     let csvContent = headers.join(",") + "\n";
@@ -49,18 +69,57 @@ export default function LeadTable({ theme, results, jobStatus, jobId, error, isH
     }
   };
 
-  // FILTERING LOGIC
   const filteredResults = results.filter(company => {
-    // Check Search Box
     const matchesSearch = company.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (company.reason && company.reason.toLowerCase().includes(searchTerm.toLowerCase()));
-    
-    // Check Status Dropdown
     const matchesStatus = statusFilter === 'All' || 
       (company.top_contacts && company.top_contacts.some(c => (c.contact_status || 'New') === statusFilter));
-
     return matchesSearch && matchesStatus;
   });
+
+  const groupedData = useMemo(() => {
+    if (!isHistoryView) return [];
+    const groups = filteredResults.reduce((acc, company) => {
+      const groupKey = `${company.industry || 'Unknown'} — ${company.location || 'Unknown'}`;
+      if (!acc[groupKey]) acc[groupKey] = [];
+      acc[groupKey].push(company);
+      return acc;
+    }, {});
+    return Object.entries(groups);
+  }, [filteredResults, isHistoryView]);
+
+  // 🛡️ OMNI-DIRECTIONAL DUPLICATE TRACKER
+  const repeatKeys = useMemo(() => {
+    const repeats = new Set();
+    const seenIdentifiers = new Map();
+
+    const checkRepeat = (company, key) => {
+      const rawString = company.domain ? company.domain : (company.name || '');
+      const identifier = rawString.toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/^www\./, '')
+        .split('/')[0]
+        .trim();
+
+      if (seenIdentifiers.has(identifier)) {
+        repeats.add(key);
+        seenIdentifiers.get(identifier).forEach(oldKey => repeats.add(oldKey));
+        seenIdentifiers.get(identifier).push(key);
+      } else {
+        seenIdentifiers.set(identifier, [key]);
+      }
+    };
+
+    if (isHistoryView) {
+      groupedData.forEach(([groupKey, companies]) => {
+        companies.forEach((company, idx) => checkRepeat(company, `${groupKey}-${idx}`));
+      });
+    } else {
+      filteredResults.forEach((company, idx) => checkRepeat(company, `flat-${idx}`));
+    }
+
+    return repeats;
+  }, [filteredResults, groupedData, isHistoryView]);
 
   if (isWorking) {
     return <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: '6px', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><StatusPill status={jobStatus} /></div>;
@@ -70,13 +129,28 @@ export default function LeadTable({ theme, results, jobStatus, jobId, error, isH
     return <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: '6px', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textMuted, fontSize: '15px' }}>System ready. Please set campaign parameters and run generation.</div>;
   }
 
-  const renderCompanyCard = (company) => {
-    const isExpanded = expandedId === company.domain;
+  const renderCompanyCard = (company, indexStr, expandedKey) => {
+    const isExpanded = expandedId === expandedKey;
+    
+    // 🚨 HYBRID CHECK: Is it repeated on this screen OR already saved in the database?
+    const isRepeat = repeatKeys.has(indexStr) || company.is_db_duplicate === true;
+
+    const cardBg = isRepeat ? '#fffbeb' : theme.surface;
+    const cardBorder = isRepeat ? '#fcd34d' : theme.border;
+    const hoverBg = isRepeat ? '#fef3c7' : '#f8fafc';
+
     return (
-      <div key={company.domain} style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: '6px', marginBottom: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
-        <div onClick={() => setExpandedId(isExpanded ? null : company.domain)} style={{ padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', background: isExpanded ? '#f8fafc' : theme.surface, transition: 'background 0.2s' }}>
+      <div key={expandedKey} style={{ background: cardBg, border: `1px solid ${cardBorder}`, borderRadius: '6px', marginBottom: '16px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+        <div onClick={() => setExpandedId(isExpanded ? null : expandedKey)} style={{ padding: '20px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', background: isExpanded ? hoverBg : cardBg, transition: 'background 0.2s' }}>
           <div>
-            <h3 style={{ margin: '0 0 6px', fontSize: '17px', fontWeight: '700', color: theme.text }}>{company.name}</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 6px' }}>
+              <h3 style={{ margin: 0, fontSize: '17px', fontWeight: '700', color: theme.text }}>{company.name}</h3>
+              {isRepeat && (
+                <span style={{ background: '#fef3c7', color: '#b45309', padding: '2px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', border: '1px solid #fde68a' }}>
+                  ↻ Repeat
+                </span>
+              )}
+            </div>
             <a href={`https://${company.domain}`} target="_blank" rel="noreferrer" style={{ fontSize: '13px', color: theme.primary, textDecoration: 'none', fontWeight: '500' }} onClick={e => e.stopPropagation()}>{company.domain}</a>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
@@ -90,14 +164,11 @@ export default function LeadTable({ theme, results, jobStatus, jobId, error, isH
 
         {isExpanded && (
           <div style={{ padding: '24px', borderTop: `1px solid ${theme.border}` }}>
-            
-            {/* DUPLICATE PREVENTION ALERT */}
             {company.duplicates_hidden > 0 && (
               <div style={{ background: '#fef3c7', color: '#92400e', padding: '12px 16px', borderRadius: '4px', fontSize: '13px', fontWeight: '600', marginBottom: '16px' }}>
                 🛡️ {company.duplicates_hidden} duplicate contacts might be present.
               </div>
             )}
-
             <p style={{ fontSize: '14px', color: theme.text, lineHeight: '1.6', background: theme.bg, padding: '16px', borderRadius: '4px', marginBottom: '24px', borderLeft: `4px solid ${theme.primary}` }}>
               {company.reason}
             </p>
@@ -113,30 +184,14 @@ export default function LeadTable({ theme, results, jobStatus, jobId, error, isH
                         </a>
                         <p style={{ margin: '6px 0 0', fontSize: '13px', color: theme.textMuted }}>{c.designation}</p>
                       </div>
-                      
-                      {/* DATE PICKER & STATUS DROPDOWN WITH LABELS */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                         <div>
-                          <label style={{ fontSize: '11px', fontWeight: '700', color: theme.textMuted, display: 'block', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            📅 Follow-up Date
-                          </label>
-                          <input 
-                            type="date" 
-                            title="Follow-up Date"
-                            defaultValue={c.follow_up_date || ""} 
-                            onChange={(e) => handleCRMUpdate(c.id, "follow_up_date", e.target.value)} 
-                            style={{ width: '100%', background: '#ffffff', border: `1px solid ${theme.border}`, color: theme.textMuted, padding: '8px 12px', borderRadius: '4px', fontSize: '13px', outline: 'none', cursor: 'pointer' }} 
-                          />
+                          <label style={{ fontSize: '11px', fontWeight: '700', color: theme.textMuted, display: 'block', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>📅 Follow-up Date</label>
+                          <input type="date" title="Follow-up Date" defaultValue={c.follow_up_date || ""} onChange={(e) => handleCRMUpdate(c.id, "follow_up_date", e.target.value)} style={{ width: '100%', background: '#ffffff', border: `1px solid ${theme.border}`, color: theme.textMuted, padding: '8px 12px', borderRadius: '4px', fontSize: '13px', outline: 'none', cursor: 'pointer' }} />
                         </div>
                         <div>
-                          <label style={{ fontSize: '11px', fontWeight: '700', color: theme.textMuted, display: 'block', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            📌 Lead Status
-                          </label>
-                          <select 
-                            defaultValue={c.contact_status || "New"} 
-                            onChange={(e) => handleCRMUpdate(c.id, "contact_status", e.target.value)} 
-                            style={{ width: '100%', background: '#ffffff', border: `1px solid ${theme.border}`, color: theme.text, padding: '8px 12px', borderRadius: '4px', fontSize: '13px', outline: 'none', cursor: 'pointer' }}
-                          >
+                          <label style={{ fontSize: '11px', fontWeight: '700', color: theme.textMuted, display: 'block', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>📌 Lead Status</label>
+                          <select defaultValue={c.contact_status || "New"} onChange={(e) => handleCRMUpdate(c.id, "contact_status", e.target.value)} style={{ width: '100%', background: '#ffffff', border: `1px solid ${theme.border}`, color: theme.text, padding: '8px 12px', borderRadius: '4px', fontSize: '13px', outline: 'none', cursor: 'pointer' }}>
                             <option value="New">New Lead</option>
                             <option value="Contacted">Contacted</option>
                             <option value="Replied">Replied</option>
@@ -144,17 +199,9 @@ export default function LeadTable({ theme, results, jobStatus, jobId, error, isH
                           </select>
                         </div>
                       </div>
-
                       <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                        <label style={{ fontSize: '11px', fontWeight: '700', color: theme.textMuted, display: 'block', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            📝 Notes
-                        </label>
-                        <textarea 
-                          defaultValue={c.notes || ""} 
-                          onBlur={(e) => handleCRMUpdate(c.id, "notes", e.target.value)} 
-                          placeholder="Add interaction notes..." 
-                          style={{ width: '100%', flex: 1, background: '#ffffff', border: `1px solid ${theme.border}`, color: theme.text, padding: '10px 12px', borderRadius: '4px', fontSize: '13px', outline: 'none', minHeight: '90px', resize: 'vertical' }} 
-                        />
+                        <label style={{ fontSize: '11px', fontWeight: '700', color: theme.textMuted, display: 'block', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>📝 Notes</label>
+                        <textarea defaultValue={c.notes || ""} onBlur={(e) => handleCRMUpdate(c.id, "notes", e.target.value)} placeholder="Add interaction notes..." style={{ width: '100%', flex: 1, background: '#ffffff', border: `1px solid ${theme.border}`, color: theme.text, padding: '10px 12px', borderRadius: '4px', fontSize: '13px', outline: 'none', minHeight: '90px', resize: 'vertical' }} />
                       </div>
                     </div>
                   ))}
@@ -170,8 +217,6 @@ export default function LeadTable({ theme, results, jobStatus, jobId, error, isH
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexShrink: 0 }}>
-        
-        {/* TOP SEARCH & STATUS FILTER BAR */}
         <div style={{ display: 'flex', gap: '12px', width: '550px' }}>
           <div style={{ position: 'relative', flex: 1 }}>
             <Search size={16} color={theme.textMuted} style={{ position: 'absolute', left: '12px', top: '10px' }} />
@@ -185,7 +230,6 @@ export default function LeadTable({ theme, results, jobStatus, jobId, error, isH
             <option value="Not Interested">Not Interested</option>
           </select>
         </div>
-
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
           {!isHistoryView && <StatusPill status={jobStatus} error={error} />}
           <button onClick={handleExportCSV} style={{ display: 'flex', alignItems: 'center', gap: '8px', background: theme.surface, border: `1px solid ${theme.border}`, color: theme.text, padding: '10px 16px', borderRadius: '4px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}>
@@ -193,7 +237,6 @@ export default function LeadTable({ theme, results, jobStatus, jobId, error, isH
           </button>
         </div>
       </div>
-
       <div style={{ flex: 1, overflowY: 'auto', paddingRight: '12px' }}>
         {jobStatus === 'completed' && filteredResults.length === 0 && (
           <div style={{ padding: '40px', textAlign: 'center', color: theme.textMuted, background: theme.surface, border: `1px dashed ${theme.border}`, borderRadius: '8px', marginTop: '20px' }}>
@@ -201,26 +244,18 @@ export default function LeadTable({ theme, results, jobStatus, jobId, error, isH
             <p style={{ margin: 0, fontSize: '14px' }}>Try a broader industry keyword or adjust your filters.</p>
           </div>
         )}
-
         {isHistoryView ? (
-          Object.entries(
-            filteredResults.reduce((acc, company) => {
-              const groupKey = `${company.industry || 'Unknown'} — ${company.location || 'Unknown'}`;
-              if (!acc[groupKey]) acc[groupKey] = [];
-              acc[groupKey].push(company);
-              return acc;
-            }, {})
-          ).map(([groupKey, companies]) => (
+          groupedData.map(([groupKey, companies]) => (
             <div key={groupKey} style={{ marginBottom: '40px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '16px' }}>
                 <h3 style={{ fontSize: '15px', fontWeight: '700', color: theme.text, margin: 0 }}>{groupKey}</h3>
                 <div style={{ height: '1px', flex: 1, backgroundColor: theme.border }}></div>
               </div>
-              {companies.map(company => renderCompanyCard(company))}
+              {companies.map((company, index) => renderCompanyCard(company, `${groupKey}-${index}`, `${company.domain}-${groupKey}-${index}`))}
             </div>
           ))
         ) : (
-          filteredResults.map(company => renderCompanyCard(company))
+          filteredResults.map((company, index) => renderCompanyCard(company, `flat-${index}`, `${company.domain}-flat-${index}`))
         )}
       </div>
     </div>

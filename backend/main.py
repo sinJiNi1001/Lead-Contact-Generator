@@ -1,3 +1,24 @@
+"""
+===============================================================================
+File: main.py
+Project: Lead Contact Generator
+Description: 
+    This is the primary entry point and central orchestrator for the FastAPI 
+    backend. It defines the REST API endpoints, handles CORS configuration for 
+    the frontend, and manages the asynchronous background tasks. 
+    
+    Key Responsibilities:
+    - Initiates the SQLite database connection and table creation.
+    - Exposes the `/api/generate` endpoint to trigger the AI scraping pipeline.
+    - Exposes the `/api/history` endpoint to serve the CRM dashboard.
+    - Orchestrates the sequential flow of data: Scraper -> AI Engine -> 
+      LinkedIn Enrichment -> SQLite Database.
+      
+    Note: Includes specific event-loop policy adjustments to ensure Playwright 
+    operates correctly on Windows Server environments.
+===============================================================================
+"""
+
 import sys
 import asyncio
 import uuid
@@ -188,32 +209,51 @@ async def background_lead_generator(job_id: str, request: LeadGenerationRequest)
                 real_contacts = [c for c in raw_contacts if c.get("is_match") is True][:3]
 
                 # 5. Save company to DB (single path — deduped by domain)
+                # ---------------------------------------------------------
+                # Step 5: Save or Update the Company in SQLite
+                # ---------------------------------------------------------
                 existing_company = db.query(Company).filter(Company.domain == clean_root_domain).first()
+                
                 if not existing_company:
+                    # 🟢 BRAND NEW COMPANY
                     new_company = Company(
                         name=clean_company_name,
                         domain=clean_root_domain,
                         industry=request.industry,
                         location=request.location,
                         lead_score=analysis.get("lead_score"),
-                        priority=analysis.get("priority", "Medium"),
                         reason=analysis.get("reason"),
-                        signals=analysis.get("signals"),
-                        confidence=analysis.get("confidence_score"),
                         source="AI_Pipeline",
                     )
                     db.add(new_company)
-                    db.flush()
+                    db.flush() # Get the new ID
                     company_db_id = new_company.id
+                    
+                    # 🚨 ADD THIS FLAG FOR REACT: Tells the frontend this is a new lead
+                    analysis["is_db_duplicate"] = False 
+                    
                 else:
+                    # 🟡 ALREADY IN DATABASE
                     company_db_id = existing_company.id
                     
+                    # Optional: Update the lead score if the new one is higher
+                    if analysis.get("lead_score", 0) > (existing_company.lead_score or 0):
+                        # Force the types so Pylance stops complaining:
+                        existing_company.lead_score = int(analysis.get("lead_score", 0))# type: ignore
+                        existing_company.reason = str(analysis.get("reason", ""))# type: ignore
+                        
+                    # 🚨 ADD THIS FLAG FOR REACT: Triggers the Yellow "Repeat" Badge!
+                    analysis["is_db_duplicate"] = True
+                    
+                db.commit()
+                    
+                # 6. SAVE CONTACTS & CLEAN FOR FRONTEND
                 # 6. SAVE CONTACTS & CLEAN FOR FRONTEND
                 duplicate_count = 0  
                 
                 if real_contacts:
                     seen_urls = set() 
-                    clean_frontend_contacts = [] # 👈 1. Create a fresh list for React
+                    clean_frontend_contacts = [] 
                     
                     for c in real_contacts:
                         url = c.get("linkedin_url", "")
@@ -223,7 +263,7 @@ async def background_lead_generator(job_id: str, request: LeadGenerationRequest)
                         if url:
                             seen_urls.add(url)
                             
-                        clean_frontend_contacts.append(c) # 👈 2. Only keep the unique ones
+                        clean_frontend_contacts.append(c) 
                         
                         existing_contact = db.query(Contact).filter(Contact.linkedin_url == url).first()
                         if not existing_contact:
@@ -238,12 +278,14 @@ async def background_lead_generator(job_id: str, request: LeadGenerationRequest)
                         else:
                             duplicate_count += 1  
                             
-                    db.commit()
                 else:
                     clean_frontend_contacts = []
                     print(f"   ⚠️ No valid contacts found for {clean_company_name}, but saving company anyway.")
 
-                # 👇 3. Send the CLEAN list to React instead of the raw 'real_contacts'
+                # 🚨 ADD THIS HERE: Guarantee everything saves immediately, even if contacts are empty!
+                db.commit()
+
+                # 👇 3. Send the CLEAN list to React
                 analysis["domain"] = clean_root_domain
                 analysis["top_contacts"] = clean_frontend_contacts 
                 analysis["duplicates_hidden"] = duplicate_count
@@ -364,8 +406,6 @@ async def get_crm_history():
         
         history_results = []
         for comp in companies:
-            if not comp.contacts:
-                continue 
                 
             history_results.append({
                 "id": comp.id,

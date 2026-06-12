@@ -1,3 +1,21 @@
+"""
+===============================================================================
+File: services/ai_engine.py
+Project: Lead Contact Generator
+Description: 
+    The "Brain" of the application. This module integrates with the Groq API 
+    (running LLaMA models) to analyze raw website text and make qualification 
+    decisions based on B2B sales heuristics.
+    
+    Key Responsibilities:
+    - Constructs heavily engineered system prompts to instruct the LLM on 
+      evaluating company viability.
+    - Parses website text to generate a "Lead Score" (0-100) and extracts 
+      business intent signals.
+    - Enforces strict JSON formatting on the LLM output so the data can be 
+      safely injected into the SQLite database.
+===============================================================================
+"""
 import os
 import json
 import time

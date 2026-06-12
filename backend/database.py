@@ -1,3 +1,19 @@
+"""
+===============================================================================
+File: database.py
+Project: Lead Contact Generator
+Description: 
+    Handles all SQLAlchemy Object-Relational Mapping (ORM) and database 
+    configurations. It acts as the bridge between the Python logic and the 
+    underlying SQLite file (lead_gen.db).
+    
+    Key Responsibilities:
+    - Defines the SQLAlchemy engine and sessionmaker instances.
+    - Contains the database schema models (`Company`, `Contact`, `SearchHistory`).
+    - Establishes relational links (e.g., One-to-Many relationship between 
+      Companies and Executive Contacts).
+===============================================================================
+"""
 import os
 from sqlalchemy import create_engine, Column, Integer, String, Float, Text, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship

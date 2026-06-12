@@ -1,3 +1,17 @@
+/**
+ * ============================================================================
+ * File: StatusPill.jsx
+ * Project: Lead Contact Generator
+ * Description: 
+ * A reusable, dynamic UI component that visually communicates the real-time 
+ * status of the AI background scraping job to the user.
+ * * Key Responsibilities:
+ * - Conditionally renders different colors, icons, and text based on the 
+ * current job status prop ('idle', 'processing', 'completed', 'failed').
+ * - Handles pulsing animations for active tasks to indicate system activity.
+ * - Displays graceful error states if the backend connection drops or fails.
+ * ============================================================================
+ */
 import React from 'react';
 import { Loader2, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
 

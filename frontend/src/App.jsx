@@ -1,3 +1,19 @@
+/**
+ * ============================================================================
+ * File: App.jsx
+ * Project: Lead Contact Generator
+ * Description: 
+ * The root container component for the React frontend. It manages the global 
+ * application state, handles routing between the "Live Generator" and "CRM 
+ * History" views, and orchestrates API communication with the FastAPI backend.
+ * * Key Responsibilities:
+ * - Maintains state for scraping parameters (Industry, Location) and job status.
+ * - Triggers the background lead generation pipeline via POST requests.
+ * - Polls the backend for live updates while a scraping job is running.
+ * - Fetches and stores the CRM database history for the dashboard view.
+ * - Passes theme configuration and data down to the LeadTable component.
+ * ============================================================================
+ */
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { MapPin, Briefcase, List, Play, Database, Search } from 'lucide-react';
